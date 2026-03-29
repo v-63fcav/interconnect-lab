@@ -1,8 +1,8 @@
-# Multi-Cloud Interconnect Lab (AWS + GCP)
+# Laboratório Multi-Cloud Interconnect (AWS + GCP)
 
-A Terraform monorepo that deploys a complete multi-cloud networking lab connecting **AWS** (4 VPCs, Transit Gateway, PrivateLink) to **GCP** (GKE cluster) via **HA VPN** with **NAT translation** for overlapping CIDRs.
+Um monorepo Terraform que implanta um laboratório completo de networking multi-cloud conectando **AWS** (4 VPCs, Transit Gateway, PrivateLink) ao **GCP** (cluster GKE) via **HA VPN** com **tradução NAT** para CIDRs sobrepostos.
 
-## Architecture
+## Arquitetura
 
 ```
 AWS (us-east-2)                                              GCP (us-west1)
@@ -31,59 +31,59 @@ AWS (us-east-2)                                              GCP (us-west1)
 └──────────────────────────────────────┘                   └──────────────────────────────────────┘
 ```
 
-## The Overlapping CIDR Problem
+## O Problema de CIDRs Sobrepostos
 
-Both clouds use the same IP ranges — this is common in real-world multi-cloud merges:
+Ambas as nuvens usam os mesmos ranges de IP — isso é comum em integrações multi-cloud no mundo real:
 
-| Range | AWS Usage | GCP Usage | Overlap? |
-|-------|-----------|-----------|----------|
-| 10.0.0.0/16 | vpc-shared | GKE nodes | Yes |
-| 10.1.0.0/16 | vpc-app-a | GKE pods | Yes |
-| 10.2.0.0/16 | vpc-app-b | GKE services (/20) | Yes |
-| 10.3.0.0/16 | vpc-vendor | — | No |
+| Range | Uso na AWS | Uso no GCP | Sobreposição? |
+|-------|-----------|-----------|---------------|
+| 10.0.0.0/16 | vpc-shared | GKE nodes | Sim |
+| 10.1.0.0/16 | vpc-app-a | GKE pods | Sim |
+| 10.2.0.0/16 | vpc-app-b | GKE services (/20) | Sim |
+| 10.3.0.0/16 | vpc-vendor | — | Não |
 
-### Solution: GCP Yields via NAT Translation
+### Solução: GCP cede via tradução NAT
 
-GCP presents itself to AWS under **translated CIDRs** that don't collide. AWS keeps its real IPs unchanged.
+O GCP se apresenta para a AWS sob **CIDRs traduzidos** que não colidem. A AWS mantém seus IPs reais inalterados.
 
-| GCP Real CIDR | Translated (seen by AWS) |
+| CIDR Real GCP | Traduzido (visto pela AWS) |
 |---------------|--------------------------|
 | 10.0.0.0/16 (nodes) | **10.100.0.0/16** |
 | 10.1.0.0/16 (pods) | **10.101.0.0/16** |
 | 10.2.0.0/20 (services) | **10.102.0.0/20** |
 
-**How it works:**
-1. GCP Cloud Router advertises translated ranges (`10.100.x`, `10.101.x`, `10.102.x`) to AWS via BGP — never the real overlapping ranges
-2. AWS TGW learns these routes and propagates them to all attached VPCs
-3. AWS instances send traffic to `10.100.x.x` → TGW → VPN tunnel → GCP
-4. In GCP, VPC routes direct `10.100.x.x` traffic to the **NAT VM**
-5. NAT VM performs **DNAT** (`10.100.x.x` → `10.0.x.x`) + **MASQUERADE** (source → NAT VM IP)
-6. Packet reaches the real GKE service; response flows back via conntrack
+**Como funciona:**
+1. O Cloud Router do GCP anuncia os ranges traduzidos (`10.100.x`, `10.101.x`, `10.102.x`) para a AWS via BGP — nunca os ranges reais sobrepostos
+2. O TGW da AWS aprende essas rotas e as propaga para todas as VPCs attached
+3. Instâncias AWS enviam tráfego para `10.100.x.x` → TGW → VPN tunnel → GCP
+4. No GCP, rotas de VPC direcionam o tráfego `10.100.x.x` para a **NAT VM**
+5. A NAT VM faz **DNAT** (`10.100.x.x` → `10.0.x.x`) + **MASQUERADE** (origem → IP da NAT VM)
+6. O pacote alcança o serviço GKE real; a resposta volta via conntrack
 
-## Network Services Demonstrated
+## Serviços de Rede Demonstrados
 
-### AWS Side (Mirrored from aws-labs)
+### Lado AWS (Espelhado do aws-labs)
 
-| Service | Description |
-|---------|-------------|
-| **Transit Gateway** | Hub-and-spoke connecting 3 VPCs (shared, app-a, app-b) + VPN to GCP |
-| **VPC Peering** | Direct link shared↔app-a (demonstrates route priority: /16 peering wins over /8 TGW) |
-| **VPC Endpoints** | S3 Gateway (free, all VPCs) + SSM/STS Interface (shared + vendor) |
-| **PrivateLink** | NLB in app-b exposed to vendor via Endpoint Service (zero network connectivity) |
-| **HA VPN** | 2 VPN connections (4 tunnels) with BGP to GCP Cloud Router |
+| Serviço | Descrição |
+|---------|-----------|
+| **Transit Gateway** | Hub-and-spoke conectando 3 VPCs (shared, app-a, app-b) + VPN para GCP |
+| **VPC Peering** | Link direto shared↔app-a (demonstra prioridade de rotas: /16 peering vence /8 TGW) |
+| **VPC Endpoints** | S3 Gateway (gratuito, todas as VPCs) + SSM/STS Interface (shared + vendor) |
+| **PrivateLink** | NLB na app-b exposto para vendor via Endpoint Service (zero conectividade de rede) |
+| **HA VPN** | 2 conexões VPN (4 tunnels) com BGP para o Cloud Router do GCP |
 
-### GCP Side (Mirrored from sl-gke)
+### Lado GCP (Espelhado do sl-gke)
 
-| Service | Description |
-|---------|-------------|
-| **GKE Cluster** | Regional, private nodes, Workload Identity, REGULAR release channel |
-| **HA VPN** | HA VPN Gateway with 4 tunnels to AWS TGW |
-| **Cloud Router** | BGP (ASN 65534) with custom route advertisements (translated CIDRs) |
-| **NAT VM** | e2-micro with iptables DNAT+MASQUERADE for CIDR translation |
-| **Internal LB** | Exposes test-app privately via ILB (reachable from AWS as 10.100.x.x) |
-| **Cloud NAT** | Outbound internet for private GKE nodes |
+| Serviço | Descrição |
+|---------|-----------|
+| **GKE Cluster** | Regional, nodes privados, Workload Identity, release channel REGULAR |
+| **HA VPN** | HA VPN Gateway com 4 tunnels para o TGW da AWS |
+| **Cloud Router** | BGP (ASN 65534) com anúncios de rotas customizados (CIDRs traduzidos) |
+| **NAT VM** | e2-micro com iptables DNAT+MASQUERADE para tradução de CIDRs |
+| **Internal LB** | Expõe test-app de forma privada via ILB (acessível da AWS como 10.100.x.x) |
+| **Cloud NAT** | Internet de saída para nodes privados do GKE |
 
-## Repo Structure
+## Estrutura do Repositório
 
 ```
 interconnect-lab/
@@ -141,9 +141,9 @@ interconnect-lab/
 └── .gitignore
 ```
 
-## Deploy Order
+## Ordem de Deploy
 
-The VPN has a **chicken-and-egg dependency**: GCP needs AWS tunnel IPs, and AWS needs GCP gateway IPs. This requires 5 sequential applies across 4 layers:
+A VPN tem uma **dependência chicken-and-egg**: o GCP precisa dos IPs dos tunnels da AWS, e a AWS precisa dos IPs do gateway do GCP. Isso requer 5 applies sequenciais em 4 camadas:
 
 ```
 Phase 1                Phase 2                Phase 3                Phase 4         Phase 5
@@ -158,17 +158,17 @@ Phase 1                Phase 2                Phase 3                Phase 4    
 └────────────────┘     └────────────────┘     └────────────────┘     └──────────┘   └──────────┘
 ```
 
-### Step-by-Step Deploy Instructions
+### Instruções de Deploy Passo a Passo
 
-#### Prerequisites
+#### Pré-requisitos
 
-- AWS CLI configured with credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-- GCP CLI configured (`gcloud auth application-default login`)
-- Terraform >= 1.5 installed
-- S3 bucket `ps-sl-state-bucket-cavi-2` exists (AWS state)
-- GCS bucket `sl-gke-tf-state-cavi` exists (GCP state)
+- AWS CLI configurado com credenciais (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+- GCP CLI configurado (`gcloud auth application-default login`)
+- Terraform >= 1.5 instalado
+- Bucket S3 `ps-sl-state-bucket-cavi-2` existente (state da AWS)
+- Bucket GCS `sl-gke-tf-state-cavi` existente (state do GCP)
 
-#### Phase 1 — GCP Infra (HA VPN Gateway Only)
+#### Fase 1 — GCP Infra (Apenas HA VPN Gateway)
 
 ```bash
 cd gcp/infra
@@ -180,9 +180,9 @@ terraform output vpn_gateway_ips
 # Example: ["34.157.100.1", "34.157.100.2"]
 ```
 
-At this point, VPN tunnels are NOT created yet (aws_vpn_tunnels is empty). Only the HA VPN gateway and GKE cluster are provisioned.
+Neste ponto, os VPN tunnels ainda NÃO estão criados (aws_vpn_tunnels está vazio). Apenas o HA VPN gateway e o cluster GKE estão provisionados.
 
-#### Phase 2 — AWS Networking (Full Stack + VPN)
+#### Fase 2 — AWS Networking (Stack Completa + VPN)
 
 ```bash
 cd aws/networking
@@ -196,9 +196,9 @@ terraform output -json vpn_tunnel_details > /tmp/vpn_tunnels.json
 # Review the 4 tunnel configs (outside_ip, psk, inside IPs, interface mapping)
 ```
 
-#### Phase 3 — GCP Infra (Complete VPN + NAT VM)
+#### Fase 3 — GCP Infra (VPN Completa + NAT VM)
 
-Create a `gcp/infra/vpn-tunnels.auto.tfvars` file with the AWS tunnel details:
+Crie um arquivo `gcp/infra/vpn-tunnels.auto.tfvars` com os detalhes dos tunnels da AWS:
 
 ```hcl
 # Example — replace with actual values from Phase 2 output
@@ -244,7 +244,7 @@ gcloud compute routers get-status interconnect-lab-router \
 # All 4 peers should show "ESTABLISHED"
 ```
 
-#### Phase 4 — AWS Compute (EC2 Instances)
+#### Fase 4 — AWS Compute (Instâncias EC2)
 
 ```bash
 cd aws/compute
@@ -255,7 +255,7 @@ terraform apply -var="state_bucket=ps-sl-state-bucket-cavi-2"
 terraform output test_commands
 ```
 
-#### Phase 5 — GCP Apps (Test Service + ILB)
+#### Fase 5 — GCP Apps (Serviço de Teste + ILB)
 
 ```bash
 cd gcp/apps
@@ -271,56 +271,709 @@ terraform output cross_cloud_test_command
 # Example: curl http://10.100.5.100:80
 ```
 
-## Testing
+## Guia de Testes — 26 Cenários
 
-### Cross-Cloud Connectivity (AWS → GKE)
+Após o deploy, execute `terraform output test_commands` em `aws/compute` para comandos prontos para colar.
 
-From any AWS instance via SSM Session Manager:
+> **Notação:** `<shared-public-ip>` significa o IP privado da instância shared-public. Obtenha todos os IPs com `terraform output private_ips` na camada compute. `<GKE_ILB_IP>` é o IP traduzido do ILB do output de `gcp/apps` (ex: `10.100.5.100`).
 
-```bash
-# Connect to an instance
-aws ssm start-session --target <instance-id>
+---
 
-# Test: reach GKE service from AWS via VPN
-# Replace 10.100.X.Y with the translated ILB IP from Phase 5
-curl http://10.100.X.Y:80
-# Expected: HTML page saying "Cross-Cloud Test Service"
+### Grupo A: Conectividade com a Internet
+
+#### A1. Public Subnet — Internet de Saída
+
+```
+shared-public (10.0.1.x) --> IGW (1:1 NAT) --> Internet
+       route: 0.0.0.0/0 -> igw
 ```
 
-All 3 TGW-attached VPCs (shared, app-a, app-b) can reach GKE:
-
-| From Instance | VPC | Path to GKE |
-|--------------|-----|-------------|
-| shared-public | vpc-shared | Instance → TGW → VPN → NAT VM → ILB → Pod |
-| shared-isolated | vpc-shared | Instance → TGW → VPN → NAT VM → ILB → Pod |
-| app-a-private | vpc-app-a | Instance → TGW → VPN → NAT VM → ILB → Pod |
-| app-a-isolated | vpc-app-a | Instance → TGW → VPN → NAT VM → ILB → Pod |
-| app-b-private | vpc-app-b | Instance → TGW → VPN → NAT VM → ILB → Pod |
-| vendor-isolated | vpc-vendor | **Cannot reach** (no TGW, PrivateLink only) |
-
-### AWS Internal Tests
+**O que prova:** Public subnets têm internet bidirecional via Internet Gateway.
 
 ```bash
-# TGW: app-a → app-b (spoke-to-spoke)
+# From shared-public:
+curl -s ifconfig.me
+# Expected: returns the instance's public IP address
+```
+
+**Como funciona:** A route table da public subnet tem `0.0.0.0/0 -> IGW`. O IGW faz NAT stateless 1:1: IP privado para IP público na saída, invertido para respostas.
+
+#### A2. Public Subnet — Internet de Entrada
+
+```
+Internet --> IGW (pub->priv NAT) --> SG :80 --> shared-public (10.0.1.x)
+```
+
+**O que prova:** Instâncias com IPs públicos recebem conexões de entrada se o security group permitir.
+
+```bash
+# From your local machine:
+curl http://<shared-public-public-ip>
+# Expected: HTML response from the Apache server
+```
+
+#### A3. Private Subnet — Apenas Saída
+
+```
+app-a-private (10.1.2.x) --> NAT GW (EIP) --> IGW --> Internet
+       route: 0.0.0.0/0 -> nat-gw
+Internet --> NAT GW --> (no inbound mapping) --> BLOCKED
+```
+
+**O que prova:** Private subnets alcançam a internet na saída (via NAT Gateway) mas não podem receber conexões de entrada.
+
+```bash
+# From app-a-private:
+curl -s ifconfig.me
+# Expected: returns the NAT Gateway's Elastic IP (NOT the instance's IP)
+```
+
+**Como funciona:** O NAT Gateway faz PAT (port address translation) stateful. Ele rastreia conexões de saída e mapeia respostas de volta. Pacotes de entrada não solicitados não têm mapeamento e são descartados.
+
+#### A4. Isolated Subnet — Zero Internet
+
+```
+shared-isolated (10.0.3.x) --> route table: no 0.0.0.0/0 --> DROPPED
+  but cross-VPC works:
+shared-isolated (10.0.3.x) --> TGW (10.0.0.0/8) --> app-b-private
+```
+
+**O que prova:** Isolated subnets têm zero acesso à internet — literalmente não existe rota.
+
+```bash
+# From shared-isolated:
+curl -s --connect-timeout 5 ifconfig.me
+# Expected: timeout after 5 seconds
+
+# But internal cross-VPC still works:
+ping -c 2 <app-b-private-ip>
+# Expected: success via TGW
+```
+
+---
+
+### Grupo B: Transit Gateway
+
+#### B1. Hub para Spoke (shared -> app-b)
+
+```
+shared-public (10.0.1.x) --> TGW --> vpc-app-b attachment --> app-b-private (10.2.2.x)
+       route: 10.0.0.0/8 -> tgw     propagated: 10.2.0.0/16
+```
+
+**O que prova:** O TGW habilita conectividade hub-and-spoke.
+
+```bash
+# From shared-public:
 ping -c 3 <app-b-private-ip>
-
-# Peering: app-a → shared (direct, not via TGW)
-traceroute <shared-public-private-ip>   # Should be 1 hop
-
-# S3 Gateway Endpoint (from isolated subnet, no internet):
-aws s3 ls s3://<test-bucket-name>
-
-# PrivateLink (from vendor-isolated):
-curl http://<privatelink-endpoint-dns>
-
-# Isolation proof (from vendor-isolated — all should FAIL):
-ping -c 2 -W 2 <shared-public-private-ip>   # Timeout
-curl -s --connect-timeout 5 ifconfig.me       # Timeout
+# Expected: success via TGW
 ```
 
-### Troubleshooting
+**Como rastrear:** Use `traceroute` para ver o hop do TGW:
 
-**VPN tunnels not coming up:**
+```bash
+# From shared-public:
+traceroute -n <app-b-private-ip>
+# Expected: 1st hop is the TGW ENI, 2nd hop is the destination
+# TGW appears as a single hop in traceroute (it's a managed service)
+```
+
+#### B2. Spoke para Spoke (app-a <-> app-b)
+
+```
+app-a-private (10.1.2.x) --> TGW --> vpc-app-b attachment --> app-b-private (10.2.2.x)
+       No direct peering -- TGW provides transitive routing
+```
+
+**O que prova:** O TGW fornece roteamento transitivo — spoke A alcança spoke B através do hub, sem peering direto.
+
+```bash
+# From app-a-private:
+ping -c 3 <app-b-private-ip>
+# Expected: success — app-a -> TGW -> app-b
+
+# From app-b-private (reverse):
+ping -c 3 <app-a-private-ip>
+# Expected: success — bidirectional
+```
+
+**Como rastrear a route table do TGW:**
+
+```bash
+# List all TGW route table entries (shows VPC + VPN propagated routes):
+TGW_ID=$(aws ec2 describe-transit-gateways \
+  --filters Name=tag:Project,Values=interconnect-lab \
+  --query 'TransitGateways[0].TransitGatewayId' --output text)
+
+RT_ID=$(aws ec2 describe-transit-gateway-route-tables \
+  --filters Name=transit-gateway-id,Values=$TGW_ID \
+  --query 'TransitGatewayRouteTables[0].TransitGatewayRouteTableId' --output text)
+
+aws ec2 search-transit-gateway-routes \
+  --transit-gateway-route-table-id $RT_ID \
+  --filters Name=state,Values=active \
+  --query 'Routes[].{CIDR:DestinationCidrBlock,Type:Type,Attachment:TransitGatewayAttachments[0].ResourceType}' \
+  --output table
+# Expected: 10.0.0.0/16 (vpc), 10.1.0.0/16 (vpc), 10.2.0.0/16 (vpc),
+#           10.100.0.0/16 (vpn), 10.101.0.0/16 (vpn), 10.102.0.0/20 (vpn)
+```
+
+#### B3. Cross-Tier via TGW (isolated -> remote private)
+
+```
+app-a-isolated (10.1.3.x) --> TGW --> vpc-app-b --> app-b-private (10.2.2.x)
+       isolated subnet                              private subnet
+```
+
+**O que prova:** O TGW roteia entre VPCs independentemente do tier da subnet.
+
+```bash
+# From app-a-isolated:
+ping -c 3 <app-b-private-ip>
+# Expected: success — TGW doesn't care about subnet tier
+```
+
+---
+
+### Grupo C: VPC Peering
+
+#### C1. Prioridade da Rota Peering sobre TGW
+
+```
+app-a -> shared:  10.0.0.0/16 -> Peering   WINS (longest prefix)
+                   10.0.0.0/8  -> TGW       less specific, ignored
+
+app-a -> app-b:   10.0.0.0/8  -> TGW       only matching route (no peering with app-b)
+```
+
+**O que prova:** Quando uma rota de peering (/16) e uma rota de TGW (/8) correspondem, a rota mais específica vence (longest prefix match).
+
+```bash
+# From app-a-private:
+traceroute -n <shared-public-ip>
+# Expected: 1 hop (direct via peering — no TGW in path)
+
+# Compare with a TGW-only destination:
+traceroute -n <app-b-private-ip>
+# Expected: 2 hops (via TGW)
+```
+
+**Como verificar qual rota está ativa:**
+
+```bash
+# Show the VPC route table for app-a-private's subnet:
+SUBNET_ID=$(aws ec2 describe-instances \
+  --filters Name=tag:Name,Values=interconnect-lab-app-a-private \
+  --query 'Reservations[0].Instances[0].SubnetId' --output text)
+
+RT_ID=$(aws ec2 describe-route-tables \
+  --filters Name=association.subnet-id,Values=$SUBNET_ID \
+  --query 'RouteTables[0].RouteTableId' --output text)
+
+aws ec2 describe-route-tables --route-table-ids $RT_ID \
+  --query 'RouteTables[0].Routes[?State==`active`].{Dest:DestinationCidrBlock,Target:GatewayId||VpcPeeringConnectionId||TransitGatewayId}' \
+  --output table
+# You'll see both 10.0.0.0/8 -> tgw AND 10.0.0.0/16 -> pcx
+# The /16 peering route wins for shared VPC destinations
+```
+
+#### C2. Peering Bidirecional
+
+```
+shared-public (10.0.1.x) <---- VPC Peering ----> app-a-private (10.1.2.x)
+     route: 10.1.0.0/16 -> pcx         route: 10.0.0.0/16 -> pcx
+```
+
+**O que prova:** VPC Peering requer entradas de rota em AMBOS os lados.
+
+```bash
+# Both directions should work:
+# From shared-public:
+ping -c 3 <app-a-private-ip>    # Success via peering
+
+# From app-a-private:
+ping -c 3 <shared-public-ip>    # Success via peering
+```
+
+---
+
+### Grupo D: VPC Endpoints
+
+#### D1. S3 Gateway Endpoint (de Isolated Subnet)
+
+```
+shared-isolated (10.0.3.x) --> route: pl-xxx -> vpce --> S3 (AWS backbone)
+       no internet              Gateway Endpoint          FREE
+```
+
+**O que prova:** S3 Gateway Endpoints permitem acesso ao S3 de subnets com zero internet.
+
+```bash
+# From shared-isolated:
+aws s3 ls s3://<test-bucket-name>
+# Expected: lists the test.txt file
+
+aws s3 cp s3://<test-bucket-name>/test.txt -
+# Expected: displays the success message
+```
+
+**Como rastrear:** Verifique que a rota do prefix list está presente:
+
+```bash
+# From shared-isolated:
+# Check that the route table has the S3 prefix list entry:
+ip route show
+# You'll see entries for local, TGW (10.0.0.0/8), and the S3 prefix list
+# The pl-xxx -> vpce entry routes S3 traffic to the endpoint
+```
+
+#### D2. SSM Interface Endpoint (Private DNS)
+
+```
+shared-isolated --> DNS: ssm.us-east-2.amazonaws.com -> 10.0.3.x (private!)
+                   --> ENI (Interface Endpoint) --> SSM API (AWS backbone)
+       without endpoint: ssm.us-east-2.amazonaws.com -> 52.x.x.x (public) -> BLOCKED
+```
+
+**O que prova:** Interface Endpoints criam uma ENI privada, e Private DNS reescreve o hostname público para o IP privado.
+
+```bash
+# From shared-isolated:
+nslookup ssm.us-east-2.amazonaws.com
+# Expected: resolves to 10.0.3.x (private IP in the isolated subnet)
+# WITHOUT the endpoint, this would resolve to a public IP
+
+# The fact that SSM session works on this instance (no internet!) is proof
+```
+
+#### D3. SSM Endpoints Centralizados via TGW
+
+```
+app-a-isolated --> Peering/TGW --> vpc-shared --> ENI (10.0.3.x) --> SSM API
+       no local SSM endpoints       has SSM Interface Endpoints
+```
+
+**O que prova:** Você pode centralizar Interface Endpoints em uma VPC compartilhada e rotear de outras VPCs via TGW/peering.
+
+```bash
+# From app-a-isolated (has NO local SSM endpoints):
+# If SSM session works, traffic flows: app-a -> peering -> shared -> SSM endpoint
+aws ssm start-session --target <app-a-isolated-id>
+```
+
+---
+
+### Grupo E: PrivateLink
+
+#### E1. Consumo de Serviço via PrivateLink
+
+```
+PRODUCER (vpc-app-b)                          CONSUMER (vpc-vendor)
+app-b-private:80 <-- NLB <-- Endpoint Svc <-- AWS backbone <-- ENI (10.3.1.x) <-- vendor-isolated
+                              vpce-svc-xxx                      vpce-xxx
+       vendor never sees app-b IPs -- only the local ENI
+```
+
+**O que prova:** Uma VPC totalmente isolada (sem TGW, sem peering, sem internet) pode acessar um serviço específico via PrivateLink.
+
+```bash
+# From vendor-isolated:
+curl http://<privatelink-endpoint-dns>
+# Expected: HTML from app-b's HTTP server:
+#   "PrivateLink Service — You are accessing this service from vpc-app-b..."
+```
+
+**Como rastrear o caminho do PrivateLink:**
+
+```bash
+# From vendor-isolated — verify the ENI exists:
+# The PrivateLink endpoint creates an ENI in the vendor subnet
+ip addr show
+# You'll see eth0 with 10.3.1.x — that's the instance
+# The PrivateLink ENI is a separate resource (not on this instance),
+# but traffic to the endpoint DNS resolves to an IP in 10.3.1.0/24
+
+nslookup <privatelink-endpoint-dns>
+# Expected: resolves to a 10.3.1.x IP (the PrivateLink ENI)
+```
+
+#### E2. Prova de Isolamento do PrivateLink
+
+```
+vendor-isolated attempts:
+  -> shared (10.0.x.x)    no TGW, no peering, no route   BLOCKED
+  -> app-a  (10.1.x.x)    no TGW, no peering, no route   BLOCKED
+  -> app-b  (10.2.x.x)    PrivateLink != network access   BLOCKED
+  -> internet              no IGW, no NAT                  BLOCKED
+  -> app-b:80 via PL ENI  only this works                 OK
+```
+
+**O que prova:** PrivateLink é acesso a nível de serviço, NÃO a nível de rede. O vendor alcança APENAS a porta exposta.
+
+```bash
+# From vendor-isolated — all should FAIL:
+ping -c 2 -W 2 <shared-public-ip>      # Timeout (no route)
+ping -c 2 -W 2 <app-a-private-ip>      # Timeout (no route)
+ping -c 2 -W 2 <app-b-private-ip>      # Timeout (PrivateLink != network)
+curl -s --connect-timeout 5 ifconfig.me  # Timeout (no internet)
+
+# Only this works:
+curl http://<privatelink-endpoint-dns>   # Success (PrivateLink)
+```
+
+---
+
+### Grupo F: Infraestrutura HA VPN
+
+#### F1. Status dos VPN Tunnels
+
+```
+AWS TGW Attachments:
+  |- vpc-shared     (type: vpc)     UP
+  |- vpc-app-a      (type: vpc)     UP
+  |- vpc-app-b      (type: vpc)     UP
+  |- vpn-conn-0     (type: vpn)     UP (2 tunnels)
+  '- vpn-conn-1     (type: vpn)     UP (2 tunnels)
+```
+
+**O que prova:** Os VPN tunnels de HA VPN entre AWS e GCP estão estabelecidos com roteamento BGP.
+
+```bash
+# AWS: check VPN tunnel status
+aws ec2 describe-vpn-connections \
+  --filters Name=tag:Project,Values=interconnect-lab \
+  --query 'VpnConnections[].VgwTelemetry[].{IP:OutsideIpAddress,Status:Status,StatusMsg:StatusMessage}' \
+  --output table
+# Expected: 4 tunnels with Status: UP
+
+# AWS: check TGW attachments (VPN alongside VPC attachments)
+aws ec2 describe-transit-gateway-attachments \
+  --filters Name=transit-gateway-id,Values=$TGW_ID \
+  --query 'TransitGatewayAttachments[].{Type:ResourceType,State:State,Name:Tags[?Key==`Name`].Value|[0]}' \
+  --output table
+# Expected: 3x vpc (available) + 2x vpn (available)
+```
+
+```bash
+# GCP: check tunnel status
+gcloud compute vpn-tunnels list \
+  --filter="region:us-west1" \
+  --format="table(name,status,detailedStatus)"
+# Expected: 4 tunnels with status: ESTABLISHED
+
+# GCP: check BGP session status
+gcloud compute routers get-status interconnect-lab-router \
+  --region=us-west1 \
+  --format="table(result.bgpPeerStatus[].name,result.bgpPeerStatus[].status,result.bgpPeerStatus[].numLearnedRoutes)"
+# Expected: 4 peers with status: ESTABLISHED, numLearnedRoutes > 0
+```
+
+#### F2. Troca de Rotas BGP
+
+```
+AWS TGW learns from GCP:              GCP Cloud Router learns from AWS:
+  10.100.0.0/16 -> vpn attachment       10.0.0.0/16 -> via BGP (shadowed by local)
+  10.101.0.0/16 -> vpn attachment       10.1.0.0/16 -> via BGP (shadowed by local)
+  10.102.0.0/20 -> vpn attachment       10.2.0.0/16 -> via BGP (shadowed by local)
+
+GCP Cloud Router advertises (custom):
+  10.100.0.0/16, 10.101.0.0/16, 10.102.0.0/20  (translated, not real)
+```
+
+**O que prova:** O BGP troca rotas dinamicamente. O GCP anuncia apenas CIDRs traduzidos; o TGW da AWS os auto-propaga.
+
+```bash
+# AWS: verify TGW learned the GCP translated routes
+aws ec2 search-transit-gateway-routes \
+  --transit-gateway-route-table-id $RT_ID \
+  --filters Name=type,Values=propagated Name=state,Values=active \
+  --query 'Routes[?contains(DestinationCidrBlock,`10.10`)].{CIDR:DestinationCidrBlock,Type:Type}' \
+  --output table
+# Expected:
+#   10.100.0.0/16  propagated  (GCP nodes, translated)
+#   10.101.0.0/16  propagated  (GCP pods, translated)
+#   10.102.0.0/20  propagated  (GCP services, translated)
+```
+
+```bash
+# GCP: verify Cloud Router is advertising translated CIDRs
+gcloud compute routers get-status interconnect-lab-router \
+  --region=us-west1 \
+  --format="yaml(result.bestRoutes)"
+# Shows the advertised routes (10.100.x, 10.101.x, 10.102.x)
+
+# GCP: verify routes learned from AWS (will be shadowed by local)
+gcloud compute routers get-status interconnect-lab-router \
+  --region=us-west1 \
+  --format="yaml(result.bgpPeerStatus[].advertisedRoutes,result.bgpPeerStatus[].numLearnedRoutes)"
+```
+
+#### F3. Saúde da NAT VM
+
+```
+NAT VM (interconnect-lab-nat-gateway):
+  can_ip_forward: true
+  iptables PREROUTING:  DNAT 10.100.x -> 10.0.x, 10.101.x -> 10.1.x, 10.102.x -> 10.2.x
+  iptables POSTROUTING: MASQUERADE (src -> NAT VM IP)
+  VPC routes: 10.100/16, 10.101/16, 10.102/20 -> next-hop: NAT VM
+```
+
+**O que prova:** A NAT VM está corretamente configurada para tradução de CIDRs.
+
+```bash
+# SSH to NAT VM via IAP
+gcloud compute ssh interconnect-lab-nat-gateway \
+  --zone=$(gcloud compute instances list --filter="name=interconnect-lab-nat-gateway" --format="value(zone)") \
+  --tunnel-through-iap
+
+# Check IP forwarding is enabled
+sysctl net.ipv4.ip_forward
+# Expected: net.ipv4.ip_forward = 1
+
+# Check iptables DNAT rules
+sudo iptables -t nat -L PREROUTING -n -v
+# Expected: 3 NETMAP rules:
+#   10.100.0.0/16 -> 10.0.0.0/16
+#   10.101.0.0/16 -> 10.1.0.0/16
+#   10.102.0.0/20 -> 10.2.0.0/20
+
+# Check MASQUERADE rule
+sudo iptables -t nat -L POSTROUTING -n -v
+# Expected: MASQUERADE on eth0
+
+# Check conntrack entries (shows active translated connections)
+sudo conntrack -L 2>/dev/null | head -20
+# After a cross-cloud test, you'll see entries mapping 10.100.x -> 10.0.x
+```
+
+**Como verificar se as rotas VPC apontam para a NAT VM:**
+
+```bash
+# From outside the NAT VM:
+gcloud compute routes list --filter="network=interconnect-lab-vpc AND destRange:10.100" \
+  --format="table(name,destRange,nextHopInstance)"
+# Expected: 3 routes pointing to interconnect-lab-nat-gateway
+```
+
+---
+
+### Grupo G: Conectividade Cross-Cloud (AWS -> GKE)
+
+#### G1. Hub para GKE (shared -> serviço GKE)
+
+```
+shared-public (10.0.1.x) --> TGW --> VPN tunnel --> Cloud Router
+  --> NAT VM (DNAT 10.100.x->10.0.x, MASQ) --> ILB (10.0.x.x) --> GKE Pod
+       route: 10.0.0.0/8 -> tgw     TGW route: 10.100.0.0/16 -> vpn (BGP)
+```
+
+**O que prova:** A VPC hub da AWS (shared) alcança um serviço GKE pelo caminho completo: TGW -> VPN -> NAT -> ILB -> Pod.
+
+```bash
+# From shared-public:
+curl -s http://<GKE_ILB_IP>:80
+# Expected: HTML saying "Cross-Cloud Test Service" with GKE metadata
+
+# Measure latency (includes VPN + NAT overhead):
+curl -o /dev/null -s -w "Total: %{time_total}s\nConnect: %{time_connect}s\nTTFB: %{time_starttransfer}s\n" http://<GKE_ILB_IP>:80
+# Expected: total ~50-150ms (us-east-2 -> us-west1 cross-region)
+```
+
+#### G2. Spoke para GKE (app-a -> serviço GKE)
+
+```
+app-a-private (10.1.2.x) --> TGW --> VPN --> NAT VM --> ILB --> GKE Pod
+       route: 10.0.0.0/8 -> tgw     same path as shared
+```
+
+**O que prova:** VPCs spoke attached ao TGW também alcançam o GKE — rotas propagadas via BGP estão disponíveis para todos os attachments.
+
+```bash
+# From app-a-private:
+curl -s http://<GKE_ILB_IP>:80
+# Expected: same HTML response — proves spoke VPCs reach GKE via TGW -> VPN
+```
+
+#### G3. VPC Somente-PrivateLink Não Alcança GKE
+
+```
+vendor-isolated (10.3.1.x) --> no TGW attachment --> no route to 10.100.x --> BLOCKED
+       no TGW, no VPN, no peering -- only PrivateLink to app-b
+```
+
+**O que prova:** O caminho VPN requer participação no TGW. A vpc-vendor não tem TGW attachment, então não alcança o GKE mesmo com a VPN existindo.
+
+```bash
+# From vendor-isolated:
+curl -s --connect-timeout 5 http://<GKE_ILB_IP>:80
+# Expected: timeout — vendor has no route to 10.100.x.x
+
+# But PrivateLink to AWS still works:
+curl http://<privatelink-endpoint-dns>
+# Expected: success — PrivateLink is independent of TGW/VPN
+```
+
+#### G4. Cross-Cloud de Múltiplos Tiers de Subnet
+
+```
+shared-public   (public)   --> TGW --> VPN --> GKE   OK
+shared-isolated (isolated) --> TGW --> VPN --> GKE   OK
+app-a-private   (private)  --> TGW --> VPN --> GKE   OK
+app-a-isolated  (isolated) --> TGW --> VPN --> GKE   OK
+app-b-private   (private)  --> TGW --> VPN --> GKE   OK
+```
+
+**O que prova:** A conectividade cross-cloud funciona de todo tier de subnet — public, private e isolated. A rota `10.0.0.0/8 -> TGW` existe em todas as route tables.
+
+```bash
+# Test from each instance type:
+# From shared-isolated (no internet, but cross-cloud works!):
+curl -s http://<GKE_ILB_IP>:80
+# Expected: success — isolated subnet has TGW route, not internet route
+
+# From app-a-isolated:
+curl -s http://<GKE_ILB_IP>:80
+# Expected: success — same reason
+```
+
+**Insight principal:** Isolated subnets têm zero internet mas conectividade cross-cloud completa. A rota `10.0.0.0/8 -> TGW` lida tanto com destinos cross-VPC (10.0-3.x) quanto cross-cloud (10.100.x).
+
+---
+
+### Grupo H: Rastreamento de Tráfego & Observabilidade
+
+#### H1. Rastreamento de Pacote End-to-End (AWS -> GKE)
+
+**O que prova:** Você pode observar o pacote em cada hop no caminho cross-cloud.
+
+**Passo 1 — Observe o tráfego na NAT VM** (execute PRIMEIRO, em um terminal separado):
+
+```bash
+# SSH to NAT VM:
+gcloud compute ssh interconnect-lab-nat-gateway --zone=<zone> --tunnel-through-iap
+
+# Watch packets being translated in real-time:
+sudo tcpdump -i eth0 -n 'net 10.100.0.0/16 or net 10.101.0.0/16 or net 10.102.0.0/16' -e
+# This captures packets BEFORE DNAT (arriving with 10.100.x destination)
+```
+
+**Passo 2 — Envie uma requisição da AWS** (em outro terminal):
+
+```bash
+# From shared-public:
+curl -s http://<GKE_ILB_IP>:80
+```
+
+**Passo 3 — Observe a saída do tcpdump:**
+
+```
+# Expected tcpdump on NAT VM:
+# Inbound (pre-DNAT): src=10.0.1.x dst=10.100.5.100 -> DNAT -> dst becomes 10.0.5.100
+# Response (post-MASQ): src=10.0.5.100 dst=<NAT_VM_IP> -> reverse NAT -> src becomes 10.100.5.100
+
+# You'll see pairs of packets:
+#   IN:  10.0.1.x > 10.100.5.100: TCP SYN
+#   OUT: 10.100.5.100 > 10.0.1.x: TCP SYN-ACK
+```
+
+**Passo 4 — Verifique entradas do conntrack:**
+
+```bash
+# On the NAT VM, after the curl:
+sudo conntrack -L -n 2>/dev/null | grep 10.100
+# Expected: conntrack entry showing the NAT mapping:
+#   tcp 6 ... src=10.0.1.x dst=10.100.5.100 sport=xxxxx dport=80
+#                           src=10.0.5.100 dst=<NAT_VM_IP> sport=80 dport=xxxxx
+```
+
+#### H2. Contadores de Tráfego dos VPN Tunnels
+
+**O que prova:** Você pode ver o volume de tráfego cruzando os VPN tunnels de ambos os consoles de nuvem.
+
+```bash
+# AWS: check bytes in/out per tunnel
+aws ec2 describe-vpn-connections \
+  --filters Name=tag:Project,Values=interconnect-lab \
+  --query 'VpnConnections[].VgwTelemetry[].{OutsideIP:OutsideIpAddress,Status:Status,AcceptedRoutes:AcceptedRouteCount}' \
+  --output table
+
+# GCP: check tunnel traffic stats
+gcloud compute vpn-tunnels describe interconnect-lab-to-aws-tunnel-0 \
+  --region=us-west1 \
+  --format="yaml(status,detailedStatus,peerIp)"
+
+# GCP: check Cloud Router learned routes count (proves BGP exchange)
+gcloud compute routers get-status interconnect-lab-router --region=us-west1 \
+  --format="table(result.bgpPeerStatus[].name,result.bgpPeerStatus[].status,result.bgpPeerStatus[].numLearnedRoutes)"
+```
+
+#### H3. Contadores de Tradução NAT
+
+**O que prova:** Contadores do iptables mostram exatamente quantos pacotes/bytes foram traduzidos.
+
+```bash
+# On the NAT VM:
+sudo iptables -t nat -L PREROUTING -n -v --line-numbers
+# Expected output:
+# num  pkts bytes target   prot opt in  out  source     destination
+# 1    42   2520  NETMAP   all  --  *   *    0.0.0.0/0  10.100.0.0/16  to:10.0.0.0/16
+# 2    0    0     NETMAP   all  --  *   *    0.0.0.0/0  10.101.0.0/16  to:10.1.0.0/16
+# 3    0    0     NETMAP   all  --  *   *    0.0.0.0/0  10.102.0.0/20  to:10.2.0.0/20
+#
+# The pkts/bytes columns show traffic hitting each DNAT rule.
+# Rule 1 (nodes) will have the most traffic (ILB is in the node subnet).
+# Rules 2-3 (pods/services) will be zero unless you address pods/services directly.
+
+sudo iptables -t nat -L POSTROUTING -n -v --line-numbers
+# Shows MASQUERADE packet counts — should match PREROUTING
+```
+
+#### H4. Observação no Nível do Pod GKE
+
+**O que prova:** Você pode verificar que a requisição chegou ao pod GKE e ver o IP de origem (NAT VM).
+
+```bash
+# Get the pod name:
+kubectl get pods -n cross-cloud-test -l app=test-app
+
+# Check nginx access logs (shows who connected):
+kubectl logs -n cross-cloud-test -l app=test-app --tail=20
+# Expected: access log entries with source IP = NAT VM's internal IP (10.0.x.x)
+# NOT the AWS instance IP — MASQUERADE changed the source
+
+# Watch logs in real-time while sending requests from AWS:
+kubectl logs -n cross-cloud-test -l app=test-app -f
+# Then curl from AWS — you'll see the request appear
+```
+
+#### H5. AWS VPC Flow Logs (Opcional — Rastreamento Extra)
+
+**O que prova:** VPC Flow Logs capturam metadados de pacotes no nível da ENI, permitindo rastrear tráfego entrando/saindo do TGW.
+
+> Nota: VPC Flow Logs não são implantados por padrão (geram custos no CloudWatch). Habilite manualmente para debugging profundo.
+
+```bash
+# Enable flow logs on the TGW attachment subnet (one-time):
+aws ec2 create-flow-logs \
+  --resource-type VPC \
+  --resource-ids <vpc-shared-id> \
+  --traffic-type ALL \
+  --log-destination-type cloud-watch-logs \
+  --log-group-name /interconnect-lab/flow-logs
+
+# After sending cross-cloud traffic, query the logs:
+aws logs filter-log-events \
+  --log-group-name /interconnect-lab/flow-logs \
+  --filter-pattern "10.100" \
+  --start-time $(date -d '5 minutes ago' +%s000)
+# Expected: ACCEPT entries showing traffic to 10.100.x.x leaving the VPC toward TGW
+```
+
+---
+
+### Solução de Problemas
+
+**VPN tunnels não subindo:**
 ```bash
 # AWS: check tunnel status
 aws ec2 describe-vpn-connections \
@@ -334,7 +987,7 @@ gcloud compute vpn-tunnels list --filter="region:us-west1" --format="table(name,
 gcloud compute routers get-status interconnect-lab-router --region=us-west1
 ```
 
-**NAT VM not translating:**
+**NAT VM não traduzindo:**
 ```bash
 # SSH to NAT VM via IAP
 gcloud compute ssh interconnect-lab-nat-gateway --zone=<zone> --tunnel-through-iap
@@ -346,56 +999,31 @@ sudo iptables -t nat -L -n -v
 sysctl net.ipv4.ip_forward
 
 # Watch live traffic
-sudo tcpdump -i eth0 'host 10.100.0.0/16' -n
+sudo tcpdump -i eth0 -n 'net 10.100.0.0/16'
 ```
 
-**ILB not getting an IP:**
+**ILB não obtendo IP:**
 ```bash
 # Check the service status
 kubectl get svc -n cross-cloud-test
 # The EXTERNAL-IP column should show a 10.0.x.x IP (may take 1-2 minutes)
 ```
 
-## Traffic Flow Detail
+**Cross-cloud curl dá timeout mas VPN está UP:**
+```bash
+# Check VPC routes for the translated CIDR on GCP:
+gcloud compute routes list --filter="network=interconnect-lab-vpc AND destRange:10.100"
+# If no routes: NAT VM may not have been created (create_vpn=false?)
 
-```
-AWS app-a-private (10.1.2.x)
-  │
-  │ dst: 10.100.5.100:80 (translated GKE ILB)
-  ▼
-VPC Route: 10.0.0.0/8 → TGW
-  │
-  ▼
-TGW Route: 10.100.0.0/16 → VPN attachment (BGP-learned)
-  │
-  ▼
-IPSec Tunnel (encrypted, via internet backbone)
-  │
-  ▼
-GCP Cloud Router (receives packet from VPN)
-  │
-  ▼
-VPC Route: 10.100.0.0/16 → NAT VM (next-hop-instance, priority 100)
-  │
-  ▼
-NAT VM iptables:
-  PREROUTING: DNAT 10.100.5.100 → 10.0.5.100 (real ILB IP)
-  POSTROUTING: MASQUERADE src → NAT VM IP (avoids overlap ambiguity)
-  │
-  ▼
-GCP Internal Load Balancer (10.0.5.100:80)
-  │
-  ▼
-GKE Pod (nginx, cross-cloud-test namespace)
-  │
-  │ Response follows reverse path via conntrack
-  ▼
-AWS app-a-private receives HTTP response
+# Check NAT VM is running:
+gcloud compute instances describe interconnect-lab-nat-gateway \
+  --zone=<zone> --format="value(status)"
+# Expected: RUNNING
 ```
 
-## Connectivity Matrix
+## Matriz de Conectividade
 
-| FROM ↓ \ TO → | shared | app-a | app-b | vendor | GKE (translated) |
+| DE ↓ \ PARA → | shared | app-a | app-b | vendor | GKE (traduzido) |
 |----------------|--------|-------|-------|--------|-------------------|
 | **shared** | self | Peer | TGW | — | TGW→VPN→NAT |
 | **app-a** | Peer | self | TGW | — | TGW→VPN→NAT |
@@ -403,15 +1031,15 @@ AWS app-a-private receives HTTP response
 | **vendor** | — | — | [PL] | self | — |
 | **GKE** | — | — | — | — | self |
 
-- **Peer** = VPC Peering (direct, /16 wins over /8 TGW route)
+- **Peer** = VPC Peering (direto, /16 vence a rota /8 do TGW)
 - **TGW** = Transit Gateway (hub-and-spoke)
-- **[PL]** = PrivateLink (service-level only, port 80)
-- **TGW→VPN→NAT** = Cross-cloud via HA VPN with CIDR translation
-- **—** = No connectivity
+- **[PL]** = PrivateLink (apenas nível de serviço, porta 80)
+- **TGW→VPN→NAT** = Cross-cloud via HA VPN com tradução de CIDRs
+- **—** = Sem conectividade
 
-## Destroy Order
+## Ordem de Destroy
 
-**Always destroy in reverse layer order** to avoid orphaned resources:
+**Sempre destrua na ordem inversa das camadas** para evitar recursos órfãos:
 
 ```bash
 # 1. GCP apps (removes K8s resources + ILB)
@@ -428,11 +1056,11 @@ cd aws/networking && terraform destroy -var="create_vpn=true" \
   -var='gcp_vpn_gateway_ips=["x.x.x.x","y.y.y.y"]'
 ```
 
-> **Note:** GKE Internal Load Balancers create GCP forwarding rules that may take up to 60 seconds to delete. If `gcp/infra` destroy fails on the VPC, wait and retry.
+> **Nota:** Internal Load Balancers do GKE criam forwarding rules no GCP que podem levar até 60 segundos para deletar. Se o destroy de `gcp/infra` falhar na VPC, aguarde e tente novamente.
 
-## Cost Estimate
+## Estimativa de Custos
 
-| Component | Qty | Cost/hr | Monthly (~730 hrs) |
+| Componente | Qtd | Custo/hr | Mensal (~730 hrs) |
 |-----------|-----|---------|---------------------|
 | AWS TGW attachments | 3 | $0.05 × 3 | $109.50 |
 | AWS NAT Gateways | 3 | $0.045 × 3 | $98.55 |
@@ -446,13 +1074,13 @@ cd aws/networking && terraform destroy -var="create_vpn=true" \
 | GCP NAT VM (e2-micro) | 1 | $0.008 | $5.84 |
 | GCP Cloud NAT | 1 | $0.045 | $32.85 |
 | GCP ILB | 1 | $0.025 | $18.25 |
-| **Total** | | **~$1.05/hr** | **~$773/mo** |
+| **Total** | | **~$1.05/hr** | **~$773/mês** |
 
-> **Cost saving:** Set `create_nat_gateways = false` on AWS and `create_vpn = false` on both sides when not testing cross-cloud. This drops cost to ~$400/mo. **Destroy everything when not in use.**
+> **Economia de custos:** Defina `create_nat_gateways = false` na AWS e `create_vpn = false` em ambos os lados quando não estiver testando cross-cloud. Isso reduz o custo para ~$400/mês. **Destrua tudo quando não estiver em uso.**
 
 ## CI/CD — GitHub Actions
 
-Three workflows handle deploy and destroy. The VPN chicken-and-egg means deploy is split into per-cloud workflows (manual trigger between them), while destroy is unified.
+Três workflows gerenciam deploy e destroy. O chicken-and-egg da VPN significa que o deploy é dividido em workflows por nuvem (trigger manual entre eles), enquanto o destroy é unificado.
 
 | Workflow | Trigger | Jobs |
 |----------|---------|------|
@@ -460,40 +1088,40 @@ Three workflows handle deploy and destroy. The VPN chicken-and-egg means deploy 
 | `tf-deploy-gcp.yml` | `workflow_dispatch` | infra → apps |
 | `tf-destroy.yml` | `workflow_dispatch` | gcp/apps → aws/compute → gcp/infra → aws/networking |
 
-### Required Secrets
+### Secrets Necessários
 
-| Secret | Purpose |
+| Secret | Finalidade |
 |--------|---------|
-| `AWS_ACCESS_KEY_ID` | AWS credentials |
-| `AWS_SECRET_ACCESS_KEY` | AWS credentials |
+| `AWS_ACCESS_KEY_ID` | Credenciais AWS |
+| `AWS_SECRET_ACCESS_KEY` | Credenciais AWS |
 | `TF_API_TOKEN` | Terraform Cloud (setup-terraform action) |
-| `TF_STATE_BUCKET` | S3 bucket for AWS remote state |
-| `GCP_CREDENTIALS` | GCP Service Account JSON key |
+| `TF_STATE_BUCKET` | Bucket S3 para remote state da AWS |
+| `GCP_CREDENTIALS` | JSON key da Service Account GCP |
 
 ### Deploy via CI/CD
 
-Due to the VPN chicken-and-egg, full deploy requires manual intervention:
+Devido ao chicken-and-egg da VPN, o deploy completo requer intervenção manual:
 
-1. Run **Deploy GCP** workflow (creates GKE + HA VPN gateway)
-2. Copy GCP VPN IPs → set as workflow input or `.tfvars`
-3. Run **Deploy AWS** workflow (creates VPCs + VPN connections)
-4. Copy AWS tunnel details → update GCP `.tfvars`
-5. Re-run **Deploy GCP** workflow (completes VPN tunnels + NAT VM + apps)
+1. Execute o workflow **Deploy GCP** (cria GKE + HA VPN gateway)
+2. Copie os IPs da VPN do GCP → defina como input do workflow ou `.tfvars`
+3. Execute o workflow **Deploy AWS** (cria VPCs + conexões VPN)
+4. Copie os detalhes dos tunnels da AWS → atualize o `.tfvars` do GCP
+5. Re-execute o workflow **Deploy GCP** (completa os VPN tunnels + NAT VM + apps)
 
-For the initial VPN setup, local `terraform apply` with manual variable passing (as described in the deploy instructions above) is more practical. CI/CD is best suited for subsequent updates after the VPN is established.
+Para a configuração inicial da VPN, `terraform apply` local com passagem manual de variáveis (conforme descrito nas instruções de deploy acima) é mais prático. CI/CD é mais adequado para atualizações subsequentes após a VPN estar estabelecida.
 
 ### Destroy via CI/CD
 
-Run the **Terraform Destroy** workflow — it destroys all 4 layers in reverse order automatically, including waiting for GKE load balancer cleanup.
+Execute o workflow **Terraform Destroy** — ele destrói todas as 4 camadas em ordem inversa automaticamente, incluindo a espera pela limpeza do load balancer do GKE.
 
-## Key Design Decisions
+## Decisões de Design Principais
 
-| Decision | Rationale |
+| Decisão | Justificativa |
 |----------|-----------|
-| **GCP yields (not AWS)** | GCP Private NAT is cloud-native; AWS has no managed VPN NAT |
-| **MASQUERADE (not NETMAP SNAT)** | Overlapping source IPs are ambiguous — MASQUERADE uses one unambiguous IP |
-| **NAT VM (not GCP Private NAT)** | Private NAT only handles SNAT (outbound); DNAT requires a VM |
-| **BGP (not static routes)** | Dynamic route exchange; TGW auto-propagates GCP routes to all VPCs |
-| **4 tunnels (not 2)** | Full HA: 2 AWS connections × 2 tunnels each, across 2 GCP interfaces |
-| **Monorepo (not separate repos)** | Keeps both sides versioned together; deploy order is documented |
-| **Cloud Router custom adverts** | Per-peer `advertise_mode = CUSTOM` to avoid conflicting with Cloud NAT |
+| **GCP cede (não a AWS)** | GCP Private NAT é cloud-native; a AWS não tem NAT gerenciado para VPN |
+| **MASQUERADE (não NETMAP SNAT)** | IPs de origem sobrepostos são ambíguos — MASQUERADE usa um IP não-ambíguo |
+| **NAT VM (não GCP Private NAT)** | Private NAT só lida com SNAT (saída); DNAT requer uma VM |
+| **BGP (não rotas estáticas)** | Troca dinâmica de rotas; TGW auto-propaga rotas do GCP para todas as VPCs |
+| **4 tunnels (não 2)** | HA completo: 2 conexões AWS × 2 tunnels cada, em 2 interfaces do GCP |
+| **Monorepo (não repos separados)** | Mantém ambos os lados versionados juntos; ordem de deploy é documentada |
+| **Custom adverts no Cloud Router** | `advertise_mode = CUSTOM` por peer para evitar conflito com Cloud NAT |
