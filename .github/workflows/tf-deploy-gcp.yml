@@ -1,0 +1,82 @@
+name: Deploy GCP (Infra + Apps)
+
+on:
+  workflow_dispatch:
+
+# Single apply at a time. Shared with tf-destroy.yml so deploy and destroy
+# never run simultaneously.
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  infra:
+    name: GCP Infra — VPC + GKE + VPN + NAT VM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: gcp/infra
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=sl-gke-tf-state-cavi" \
+            -backend-config="prefix=terraform/interconnect-lab/infra"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -no-color -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
+
+  apps:
+    name: GCP Apps — Test Service + ILB
+    needs: infra
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: gcp/apps
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="bucket=sl-gke-tf-state-cavi" \
+            -backend-config="prefix=terraform/interconnect-lab/apps"
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -no-color -input=false
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve
